@@ -1,9 +1,9 @@
 import requests
-import time
+import os
 from bs4 import BeautifulSoup
 
-TOKEN = "COLOQUE_AQUI_SEU_TOKEN"
-CHAT_ID = "COLOQUE_AQUI_SEU_CHAT_ID"
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excellence"
 
 def get_site_text():
@@ -16,13 +16,7 @@ def send_telegram(message):
     payload = {"chat_id": CHAT_ID, "text": message}
     requests.post(url, data=payload)
 
-last_text = ""
+# Executa uma vez e finaliza
+current_text = get_site_text()
 
-while True:
-    current_text = get_site_text()
-    
-    if last_text and current_text != last_text:
-        send_telegram("🚨 Atualização detectada no site Seal of Excellence!\n" + URL)
-    
-    last_text = current_text
-    time.sleep(3600)  # verifica a cada 1 hora
+send_telegram("✅ Monitor rodou com sucesso.\n" + URL)
