@@ -10,17 +10,26 @@ URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excel
 
 STATE_FILE = "state.json"
 
-def get_site_hash():
+def get_section_hash():
     r = requests.get(URL, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
-    text = soup.get_text()
-    return hashlib.sha256(text.encode()).hexdigest()
+
+    full_text = soup.get_text(separator="\n")
+    
+    marker = "List of Seal of Excellence"
+
+    if marker not in full_text:
+        return None
+
+    # Pega apenas o texto a partir da seção desejada
+    section_text = full_text.split(marker, 1)[1]
+
+    return hashlib.sha256(section_text.encode()).hexdigest()
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message}
-    response = requests.post(url, data=payload, timeout=30)
-    return response.status_code
+    requests.post(url, data=payload, timeout=30)
 
 def load_state():
     try:
@@ -33,23 +42,27 @@ def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
 
-current_hash = get_site_hash()
+current_hash = get_section_hash()
 state = load_state()
 
-if state["last_hash"] == "":
-    state["last_hash"] = current_hash
-    send_telegram("🤖 Monitor iniciado e funcionando.\n" + URL)
-
-elif current_hash != state["last_hash"]:
-    send_telegram("🚨 Mudança detectada no site!\n" + URL)
-    state["last_hash"] = current_hash
-    state["no_change_count"] = 0
-
+if current_hash is None:
+    send_telegram("⚠️ Não foi possível encontrar a seção 'List of Seal of Excellence' no site.")
 else:
-    state["no_change_count"] += 1
 
-    if state["no_change_count"] >= 3:
-        send_telegram("✅ BOT funcionando normalmente.\nNenhuma mudança detectada nas últimas 3 horas.")
+    if state["last_hash"] == "":
+        state["last_hash"] = current_hash
+        send_telegram("🤖 Monitor da seção 'List of Seal of Excellence' iniciado com sucesso.")
+
+    elif current_hash != state["last_hash"]:
+        send_telegram("🚨 Nova informação detectada na seção 'List of Seal of Excellence'!\n" + URL)
+        state["last_hash"] = current_hash
         state["no_change_count"] = 0
+
+    else:
+        state["no_change_count"] += 1
+
+        if state["no_change_count"] >= 3:
+            send_telegram("✅ BOT funcionando normalmente.\nNenhuma mudança na seção 'List of Seal of Excellence' nas últimas 3 horas.")
+            state["no_change_count"] = 0
 
 save_state(state)
