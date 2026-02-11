@@ -19,16 +19,21 @@ def send_message(text):
 r = requests.get(URL, timeout=30)
 soup = BeautifulSoup(r.text, "html.parser")
 
-cards = soup.find_all("article")
+all_links = []
 
-if not cards:
-    send_message("❌ Nenhum <article> encontrado.")
-else:
-    msg = "🔎 Articles encontrados:\n\n"
-    for card in cards[:3]:
-        link = card.find("a", href=True)
-        if link:
-            href = link["href"]
+for a in soup.find_all("a", href=True):
+    href = a["href"]
+
+    # ignorar navegação e outras ações
+    if "/funding/seal-of-excellence/" in href:
+        if not href.endswith("/seal-of-excellence") and "postdoctoral" not in href:
             full_link = href if href.startswith("http") else BASE_URL + href
-            msg += full_link + "\n\n"
-    send_message(msg)
+            all_links.append(full_link)
+
+unique_links = list(set(all_links))
+
+msg = "🔎 POSSÍVEIS LINKS DA LISTA:\n\n"
+for link in unique_links[:10]:
+    msg += link + "\n\n"
+
+send_message(msg)
