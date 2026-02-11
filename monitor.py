@@ -1,68 +1,77 @@
 import requests
 import os
-import hashlib
-import json
 from bs4 import BeautifulSoup
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excellence"
 
-STATE_FILE = "state.json"
+BASE_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu"
+URL = BASE_URL + "/funding/seal-of-excellence"
 
-def get_section_hash():
+def send_photo_with_caption(photo_url, caption):
+    telegram_url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": photo_url,
+        "caption": caption[:1024],  # limite do Telegram para legenda
+        "parse_mode": "Markdown"
+    }
+    requests.post(telegram_url, data=payload, timeout=30)
+
+def get_latest_news():
     r = requests.get(URL, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    full_text = soup.get_text(separator="\n")
-    
-    marker = "List of Seal of Excellence"
+    # pega todos os links internos da seção
+    links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/funding/seal-of-excellence/" in href and href != "/funding/seal-of-excellence":
+            full_link = href if href.startswith("http") else BASE_URL + href
+            links.append(full_link)
 
-    if marker not in full_text:
+    if not links:
         return None
 
-    # Pega apenas o texto a partir da seção desejada
-    section_text = full_text.split(marker, 1)[1]
+    latest_link = links[0]  # assume que o primeiro é o mais recente
 
-    return hashlib.sha256(section_text.encode()).hexdigest()
+    # agora entra na página da notícia
+    r2 = requests.get(latest_link, timeout=30)
+    soup2 = BeautifulSoup(r2.text, "html.parser")
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message}
-    requests.post(url, data=payload, timeout=30)
+    # título
+    title = soup2.find("h1")
+    title_text = title.get_text(strip=True) if title else "Novo item publicado"
 
-def load_state():
-    try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {"last_hash": "", "no_change_count": 0}
+    # resumo (primeiro parágrafo significativo)
+    paragraphs = soup2.find_all("p")
+    summary = ""
+    for p in paragraphs:
+        text = p.get_text(strip=True)
+        if len(text) > 100:
+            summary = text
+            break
 
-def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
+    # imagem principal
+    image = soup2.find("img")
+    image_url = ""
+    if image and image.get("src"):
+        src = image["src"]
+        image_url = src if src.startswith("http") else BASE_URL + src
 
-current_hash = get_section_hash()
-state = load_state()
+    return title_text, summary, image_url, latest_link
 
-if current_hash is None:
-    send_telegram("⚠️ Não foi possível encontrar a seção 'List of Seal of Excellence' no site.")
-else:
+news = get_latest_news()
 
-    if state["last_hash"] == "":
-        state["last_hash"] = current_hash
-        send_telegram("🤖 Monitor da seção 'List of Seal of Excellence' iniciado com sucesso.")
+if news:
+    title, summary, image_url, link = news
 
-    elif current_hash != state["last_hash"]:
-        send_telegram("🚨 Nova informação detectada na seção 'List of Seal of Excellence'!\n" + URL)
-        state["last_hash"] = current_hash
-        state["no_change_count"] = 0
+    caption = f"📢 *Novo item publicado!*\n\n"
+    caption += f"*{title}*\n\n"
+    caption += f"{summary}\n\n"
+    caption += f"[🔎 Learn more]({link})"
 
+    if image_url:
+        send_photo_with_caption(image_url, caption)
     else:
-        state["no_change_count"] += 1
-
-        if state["no_change_count"] >= 3:
-            send_telegram("✅ BOT funcionando normalmente.\nNenhuma mudança na seção 'List of Seal of Excellence' nas últimas 3 horas.")
-            state["no_change_count"] = 0
-
-save_state(state)
+        send_photo_with_caption("", caption)
