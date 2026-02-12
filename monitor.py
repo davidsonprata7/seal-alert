@@ -2,6 +2,7 @@ import requests
 import os
 import json
 import re
+import html
 from datetime import datetime
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -9,55 +10,81 @@ CHAT_ID = os.environ["CHAT_ID"]
 
 API_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/eac-api/content?filters[permanent|field_eac_topics][0]=290&language=en&page[limit]=10&sort=date_desc&story_type=pledge&type=story"
 
-BASE_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-
 STATE_FILE = "state.json"
 
 
-# ======== BANDEIRAS =========
-FLAGS = {
-    "Estonia": "🇪🇪",
-    "Brittany": "🇫🇷",
-    "France": "🇫🇷",
-    "Germany": "🇩🇪",
-    "Spain": "🇪🇸",
-    "Italy": "🇮🇹",
-    "Portugal": "🇵🇹",
-    "Poland": "🇵🇱",
-    "Netherlands": "🇳🇱",
-    "Belgium": "🇧🇪",
-    "Austria": "🇦🇹",
-    "Sweden": "🇸🇪",
-    "Finland": "🇫🇮",
-    "Ireland": "🇮🇪",
-}
+# ---------------- TELEGRAM ---------------- #
+
+def send_message(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False
+    }
+    requests.post(url, data=payload)
 
 
-def detect_flag(title):
-    for country, flag in FLAGS.items():
-        if country.lower() in title.lower():
-            return flag
-    return ""
-
+# ---------------- HELPERS ---------------- #
 
 def clean_html(raw_html):
-    clean = re.sub('<.*?>', '', raw_html)
-    return clean.strip()
+    text = re.sub('<.*?>', '', raw_html)
+    text = html.unescape(text)
+    return text.strip()
 
 
 def extract_end_date(url):
     try:
-        page = requests.get(url)
-        html = page.text
+        r = requests.get(url)
+        html_content = r.text
 
-        match = re.search(r'End date.*?(\d{1,2}\s+\w+\s+\d{4})', html, re.DOTALL)
+        match = re.search(r'End date:</strong>\s*([^<]+)', html_content)
         if match:
-            return match.group(1)
+            return match.group(1).strip()
+        else:
+            return "Not specified"
     except:
-        pass
+        return "Not specified"
 
-    return "Not found"
 
+def get_flag(title):
+    countries = {
+        "Estonia": "🇪🇪",
+        "Brittany": "🇫🇷",
+        "France": "🇫🇷",
+        "Germany": "🇩🇪",
+        "Spain": "🇪🇸",
+        "Italy": "🇮🇹",
+        "Portugal": "🇵🇹",
+        "Poland": "🇵🇱",
+        "Netherlands": "🇳🇱",
+        "Belgium": "🇧🇪",
+        "Sweden": "🇸🇪",
+        "Finland": "🇫🇮",
+        "Ireland": "🇮🇪",
+        "Austria": "🇦🇹",
+        "Czech": "🇨🇿",
+        "Hungary": "🇭🇺",
+        "Romania": "🇷🇴",
+        "Croatia": "🇭🇷",
+        "Lithuania": "🇱🇹",
+        "Latvia": "🇱🇻",
+        "Slovenia": "🇸🇮",
+        "Slovakia": "🇸🇰",
+        "Bulgaria": "🇧🇬",
+        "Greece": "🇬🇷",
+        "Denmark": "🇩🇰"
+    }
+
+    for country, flag in countries.items():
+        if country.lower() in title.lower():
+            return flag
+
+    return ""
+
+
+# ---------------- STATE ---------------- #
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -74,32 +101,7 @@ def save_state(state):
         json.dump(state, f)
 
 
-def send_photo_with_button(photo_url, caption, link):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-
-    payload = {
-        "chat_id": CHAT_ID,
-        "photo": photo_url,
-        "caption": caption,
-        "parse_mode": "HTML",
-        "reply_markup": json.dumps({
-            "inline_keyboard": [
-                [{"text": "Learn more", "url": link}]
-            ]
-        })
-    }
-
-    requests.post(url, data=payload)
-
-
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text
-    }
-    requests.post(url, data=payload)
-
+# ---------------- MAIN ---------------- #
 
 def main():
     state = load_state()
@@ -119,29 +121,32 @@ def main():
         for item in reversed(new_items):
             title = item["title"]
             intro = clean_html(item["intro"])
-            link = BASE_URL + item["url"]
-            image = item["image"]
+            link = "https://marie-sklodowska-curie-actions.ec.europa.eu" + item["url"]
 
-            flag = detect_flag(title)
+            flag = get_flag(title)
             end_date = extract_end_date(link)
 
-            caption = f"""🚩 <b>{title} {flag}</b>
+            message = f"""
+🚩 <b>{title} {flag}</b>
 
 📍 {intro}
 
 ⚠️ <b>End date:</b> ⚠️
-✅ <b>{end_date}</b>
+✅ {end_date}
+
+🔗 <a href="{link}">Learn more</a>
 """
 
-            send_photo_with_button(image, caption, link)
+            send_message(message)
+
             seen_ids.append(item["nid"])
 
         state["seen_ids"] = seen_ids
         save_state(state)
 
-    # Heartbeat a cada 6h
+    # Heartbeat a cada 3 horas
     now = int(datetime.now().timestamp())
-    if now - state.get("last_heartbeat", 0) > 21600:
+    if now - state.get("last_heartbeat", 0) > 10800:
         send_message("✅ Bot ativo — nenhuma nova publicação encontrada.")
         state["last_heartbeat"] = now
         save_state(state)
