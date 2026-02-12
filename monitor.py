@@ -1,7 +1,6 @@
 import os
 import json
 import requests
-from datetime import datetime
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
@@ -10,19 +9,35 @@ LIST_URL = BASE + "/funding/seal-of-excellence"
 STATE_FILE = "state.json"
 
 
-# --------- COUNTRY FLAG DETECTION ---------
+# =========================
+# COUNTRY FLAGS (EXPANDIDO)
+# =========================
 
 COUNTRIES = {
     "France": "🇫🇷",
     "Croatia": "🇭🇷",
     "Estonia": "🇪🇪",
-    "Brittany": "🇫🇷",
     "Germany": "🇩🇪",
     "Italy": "🇮🇹",
     "Spain": "🇪🇸",
     "Portugal": "🇵🇹",
     "Netherlands": "🇳🇱",
-    "Belgium": "🇧🇪"
+    "Belgium": "🇧🇪",
+    "Poland": "🇵🇱",
+    "Czech": "🇨🇿",
+    "Austria": "🇦🇹",
+    "Sweden": "🇸🇪",
+    "Finland": "🇫🇮",
+    "Ireland": "🇮🇪",
+    "Bulgaria": "🇧🇬",
+    "Romania": "🇷🇴",
+    "Greece": "🇬🇷",
+    "Hungary": "🇭🇺",
+    "Slovenia": "🇸🇮",
+    "Slovakia": "🇸🇰",
+    "Lithuania": "🇱🇹",
+    "Latvia": "🇱🇻",
+    "Luxembourg": "🇱🇺"
 }
 
 
@@ -33,7 +48,9 @@ def detect_flag(title):
     return ""
 
 
-# --------- STATE ---------
+# =========================
+# STATE CONTROL
+# =========================
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -47,7 +64,9 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-# --------- GET LINKS ---------
+# =========================
+# GET LINKS (Playwright)
+# =========================
 
 def get_links():
     with sync_playwright() as p:
@@ -71,7 +90,9 @@ def get_links():
     return links
 
 
-# --------- EXTRACT ARTICLE ---------
+# =========================
+# EXTRACT ARTICLE
+# =========================
 
 def extract_article(url):
     r = requests.get(url, timeout=30)
@@ -94,7 +115,6 @@ def extract_article(url):
 
     # END DATE (estrutura real MSCA)
     end_date = "Not found"
-
     items = soup.find_all("div", class_="ecl-description-list__item")
     for item in items:
         term = item.find(class_="ecl-description-list__term")
@@ -116,7 +136,9 @@ def extract_article(url):
     return title, summary, end_date, image_url
 
 
-# --------- SEND TELEGRAM ---------
+# =========================
+# TELEGRAM SEND
+# =========================
 
 def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
 
@@ -138,7 +160,7 @@ def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
     api_photo = f"https://api.telegram.org/bot{token}/sendPhoto"
     api_text = f"https://api.telegram.org/bot{token}/sendMessage"
 
-    # Try photo first
+    # Try sending image
     if image_url:
         try:
             img_data = requests.get(image_url, timeout=30).content
@@ -152,12 +174,12 @@ def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
                 files={"photo": img_data}
             )
             if response.status_code == 200:
-                return
+                return True
         except:
             pass
 
     # Fallback to text
-    requests.post(
+    response = requests.post(
         api_text,
         data={
             "chat_id": chat_id,
@@ -166,8 +188,23 @@ def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
         }
     )
 
+    return response.status_code == 200
 
-# --------- MAIN ---------
+
+def send_no_updates(token, chat_id):
+    api = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(
+        api,
+        data={
+            "chat_id": chat_id,
+            "text": "ℹ️ No new Seal of Excellence updates today."
+        }
+    )
+
+
+# =========================
+# MAIN
+# =========================
 
 def main():
     token = os.getenv("BOT_TOKEN")
@@ -176,15 +213,22 @@ def main():
     state = load_state()
     links = get_links()
 
-    print("Links encontrados:", len(links))
+    new_sent = 0
 
     for link in links:
         if link not in state["sent"]:
             title, summary, end_date, image_url = extract_article(link)
 
-            send_telegram(token, chat_id, title, summary, end_date, link, image_url)
+            success = send_telegram(
+                token, chat_id, title, summary, end_date, link, image_url
+            )
 
-            state["sent"].append(link)
+            if success:
+                state["sent"].append(link)
+                new_sent += 1
+
+    if new_sent == 0:
+        send_no_updates(token, chat_id)
 
     save_state(state)
 
