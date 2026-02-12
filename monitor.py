@@ -106,8 +106,9 @@ def save_state(state):
 
 def main():
     if DEBUG:
-    send_message("🐞 DEBUG ATIVO")
-
+        
+        send_message("🐞 DEBUG ATIVO")
+    
     now = datetime.utcnow()
     state = load_state()
     seen_ids = state.get("seen_ids", [])
