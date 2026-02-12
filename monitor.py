@@ -10,6 +10,31 @@ LIST_URL = BASE + "/funding/seal-of-excellence"
 STATE_FILE = "state.json"
 
 
+# --------- COUNTRY FLAG DETECTION ---------
+
+COUNTRIES = {
+    "France": "🇫🇷",
+    "Croatia": "🇭🇷",
+    "Estonia": "🇪🇪",
+    "Brittany": "🇫🇷",
+    "Germany": "🇩🇪",
+    "Italy": "🇮🇹",
+    "Spain": "🇪🇸",
+    "Portugal": "🇵🇹",
+    "Netherlands": "🇳🇱",
+    "Belgium": "🇧🇪"
+}
+
+
+def detect_flag(title):
+    for country, flag in COUNTRIES.items():
+        if country.lower() in title.lower():
+            return flag
+    return ""
+
+
+# --------- STATE ---------
+
 def load_state():
     if not os.path.exists(STATE_FILE):
         return {"sent": []}
@@ -22,8 +47,9 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
+# --------- GET LINKS ---------
+
 def get_links():
-    print("Carregando página principal...")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -45,8 +71,9 @@ def get_links():
     return links
 
 
+# --------- EXTRACT ARTICLE ---------
+
 def extract_article(url):
-    print("Extraindo:", url)
     r = requests.get(url, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -54,31 +81,30 @@ def extract_article(url):
     title_tag = soup.find("h1")
     title = title_tag.get_text(strip=True) if title_tag else "No title"
 
-    # SUMMARY — primeiro parágrafo real do artigo
+    # SUMMARY
     summary = ""
-    article = soup.find("main")
-    if article:
-        paragraphs = article.find_all("p")
+    main = soup.find("main")
+    if main:
+        paragraphs = main.find_all("p")
         for p in paragraphs:
             text = p.get_text(strip=True).replace("\xa0", " ")
             if len(text) > 80:
                 summary = text
                 break
 
-    # END DATE — estrutura real MSCA
+    # END DATE (estrutura real MSCA)
     end_date = "Not found"
 
     items = soup.find_all("div", class_="ecl-description-list__item")
     for item in items:
         term = item.find(class_="ecl-description-list__term")
         definition = item.find(class_="ecl-description-list__definition")
-
         if term and definition:
             if "End date" in term.get_text(strip=True):
                 end_date = definition.get_text(strip=True)
                 break
 
-    # IMAGE — imagem principal do artigo
+    # IMAGE
     image_url = None
     media = soup.find("div", class_="ecl-media-container")
     if media:
@@ -90,11 +116,14 @@ def extract_article(url):
     return title, summary, end_date, image_url
 
 
+# --------- SEND TELEGRAM ---------
 
 def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
 
+    flag = detect_flag(title)
+
     caption = (
-        f"🚩 {title}\n\n"
+        f"🚩 {title} {flag}\n\n"
         f"📍 {summary}\n\n"
         f"⚠️ End date: ⚠️\n"
         f"✅ {end_date}"
@@ -106,28 +135,43 @@ def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
         ]
     }
 
-    api = f"https://api.telegram.org/bot{token}/sendMessage"
+    api_photo = f"https://api.telegram.org/bot{token}/sendPhoto"
+    api_text = f"https://api.telegram.org/bot{token}/sendMessage"
 
-    response = requests.post(api, data={
-        "chat_id": chat_id,
-        "text": caption,
-        "reply_markup": json.dumps(keyboard)
-    })
+    # Try photo first
+    if image_url:
+        try:
+            img_data = requests.get(image_url, timeout=30).content
+            response = requests.post(
+                api_photo,
+                data={
+                    "chat_id": chat_id,
+                    "caption": caption,
+                    "reply_markup": json.dumps(keyboard)
+                },
+                files={"photo": img_data}
+            )
+            if response.status_code == 200:
+                return
+        except:
+            pass
 
-    print("TELEGRAM STATUS:", response.status_code)
-    print("TELEGRAM RESPONSE:", response.text)
+    # Fallback to text
+    requests.post(
+        api_text,
+        data={
+            "chat_id": chat_id,
+            "text": caption,
+            "reply_markup": json.dumps(keyboard)
+        }
+    )
 
-    if response.status_code != 200:
-        raise RuntimeError("Telegram send failed")
 
+# --------- MAIN ---------
 
 def main():
-    print("Iniciando monitor...")
     token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
-
-    if not token or not chat_id:
-        raise RuntimeError("BOT_TOKEN or CHAT_ID missing")
 
     state = load_state()
     links = get_links()
@@ -136,8 +180,6 @@ def main():
 
     for link in links:
         if link not in state["sent"]:
-            print("Enviando:", link)
-
             title, summary, end_date, image_url = extract_article(link)
 
             send_telegram(token, chat_id, title, summary, end_date, link, image_url)
@@ -145,7 +187,6 @@ def main():
             state["sent"].append(link)
 
     save_state(state)
-    print("Finalizado.")
 
 
 if __name__ == "__main__":
