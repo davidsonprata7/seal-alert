@@ -1,13 +1,18 @@
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 
 
-URL = "COLE_AQUI_A_URL"
+BASE_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu"
+URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excellence"
 STATE_FILE = "state.json"
 
+
+# ========================
+# UTIL
+# ========================
 
 def get_env(name):
     value = os.getenv(name)
@@ -35,74 +40,140 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def parse_page():
+def today_brt():
+    # Brasília UTC-3 fixo
+    return (datetime.utcnow() - timedelta(hours=3)).date()
+
+
+# ========================
+# SCRAPING
+# ========================
+
+def parse_list_page():
     r = requests.get(URL)
     soup = BeautifulSoup(r.text, "html.parser")
 
     items = []
 
-    # ⚠️ ADAPTAR PARA SUA PÁGINA REAL
-    for block in soup.select(".card"):
-        title = block.select_one(".title").get_text(strip=True)
-        end_date_text = block.select_one(".end-date").get_text(strip=True)
+    for link in soup.select("a[href*='/funding/seal-of-excellence/']"):
+        href = link.get("href")
+        title = link.get_text(strip=True)
 
-        end_date = datetime.strptime(end_date_text, "%d %B %Y")
+        if not href or not title:
+            continue
 
-        item_id = title
+        full_url = href if href.startswith("http") else BASE_URL + href
 
         items.append({
-            "id": item_id,
+            "id": full_url,
             "title": title,
-            "end_date": end_date.strftime("%Y-%m-%d")
+            "url": full_url
         })
 
-    return items
+    # remove duplicados
+    unique = {item["id"]: item for item in items}
+    return list(unique.values())
 
+
+def extract_end_date(detail_url):
+    r = requests.get(detail_url)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    text = soup.get_text(" ", strip=True)
+
+    marker = "End date:"
+    if marker not in text:
+        return None
+
+    try:
+        raw = text.split(marker)[1].strip().split(" ")[0:3]
+        date_str = " ".join(raw)
+        parsed = datetime.strptime(date_str, "%d %B %Y")
+        return parsed.strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+# ========================
+# MAIN LOGIC
+# ========================
 
 def main():
     token = get_env("BOT_TOKEN")
     chat_id = get_env("CHAT_ID")
 
     state = load_state()
-    current_items = parse_page()
+    current_items = parse_list_page()
 
-    today = datetime.utcnow().date()
+    today = today_brt()
     is_saturday = today.weekday() == 5
 
     open_count = 0
 
     for item in current_items:
-        end_date = datetime.strptime(item["end_date"], "%Y-%m-%d").date()
 
-        if end_date > today:
-            open_count += 1
-
-        # 🆕 Nova oportunidade
+        # NOVO ITEM
         if item["id"] not in state["items"]:
+
+            end_date = extract_end_date(item["url"])
+            if not end_date:
+                continue
+
+            end_date_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+            if end_date_date > today:
+                open_count += 1
+
             send_telegram(
                 token,
                 chat_id,
-                f"🆕 Nova oportunidade:\n{item['title']}\nEnd date: {item['end_date']}"
+                f"🆕 Nova publicação MSCA\n\n"
+                f"{item['title']}\n"
+                f"End date: {end_date}\n"
+                f"{item['url']}"
             )
+
             state["items"][item["id"]] = {
                 "title": item["title"],
-                "end_date": item["end_date"]
+                "end_date": end_date,
+                "last_reminder": None
             }
 
-        # 🔁 Reenvio sábado
-        elif is_saturday and end_date > today:
-            send_telegram(
-                token,
-                chat_id,
-                f"🔁 Ainda aberta:\n{item['title']}\nEnd date: {item['end_date']}"
-            )
+        # ITEM EXISTENTE
+        else:
+            entry = state["items"][item["id"]]
+            end_date = entry["end_date"]
+            end_date_date = datetime.strptime(end_date, "%Y-%m-%d").date()
 
-    # 💓 Heartbeat diário
+            if end_date_date > today:
+                open_count += 1
+
+                # LEMBRETE SEMANAL
+                if is_saturday:
+                    last = entry.get("last_reminder")
+
+                    if last != str(today):
+
+                        days_left = (end_date_date - today).days
+
+                        send_telegram(
+                            token,
+                            chat_id,
+                            f"⏰ Reminder semanal\n\n"
+                            f"{entry['title']}\n"
+                            f"End date: {end_date}\n"
+                            f"Dias restantes: {days_left}\n"
+                            f"{item['url']}"
+                        )
+
+                        entry["last_reminder"] = str(today)
+
+    # HEARTBEAT diário
     if state["last_heartbeat"] != str(today):
         send_telegram(
             token,
             chat_id,
-            f"💓 Monitor ativo.\nOportunidades abertas: {open_count}"
+            f"💓 Monitor ativo\nOportunidades abertas: {open_count}"
         )
         state["last_heartbeat"] = str(today)
 
