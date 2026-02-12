@@ -1,10 +1,9 @@
 import os
 import json
 import requests
-from datetime import datetime
+import xml.etree.ElementTree as ET
 
-BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-API = f"{BASE}/jsonapi/node/seal_of_excellence"
+RSS_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/news/rss.xml"
 STATE_FILE = "state.json"
 
 
@@ -20,22 +19,20 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def fetch_items():
-    r = requests.get(API, timeout=30)
+def fetch_rss():
+    r = requests.get(RSS_URL, timeout=30)
     if r.status_code != 200:
-        raise RuntimeError("Failed to fetch JSON API")
-
-    data = r.json()
-    return data.get("data", [])
+        raise RuntimeError("Failed to load RSS")
+    return r.content
 
 
-def send_message(token, chat_id, title, link, end_date):
+def send_message(token, chat_id, title, link, pub_date):
     api = f"https://api.telegram.org/bot{token}/sendPhoto"
 
     caption = (
-        f"🚩 {title} 🇫🇷\n\n"
-        f"⚠️ End date:\n"
-        f"✅ {end_date}"
+        f"🚩 {title}\n\n"
+        f"⚠️ Publication date:\n"
+        f"✅ {pub_date}"
     )
 
     keyboard = {
@@ -48,7 +45,7 @@ def send_message(token, chat_id, title, link, end_date):
         api,
         data={
             "chat_id": chat_id,
-            "photo": f"{BASE}/sites/default/files/styles/oe_theme_medium/public/default_images/news-default.jpg",
+            "photo": "https://marie-sklodowska-curie-actions.ec.europa.eu/sites/default/files/styles/oe_theme_medium/public/default_images/news-default.jpg",
             "caption": caption,
             "reply_markup": json.dumps(keyboard)
         },
@@ -61,25 +58,25 @@ def main():
     chat_id = os.getenv("CHAT_ID")
 
     state = load_state()
-    items = fetch_items()
 
-    print("Items encontrados:", len(items))
+    rss_content = fetch_rss()
+    root = ET.fromstring(rss_content)
+
+    items = root.findall(".//item")
+
+    print("Total RSS items:", len(items))
 
     for item in items:
-        title = item["attributes"]["title"]
-        created = item["attributes"]["created"]
+        title = item.find("title").text
+        link = item.find("link").text
+        pub_date = item.find("pubDate").text
 
-        slug = item["attributes"]["drupal_internal__nid"]
-        link = f"{BASE}/node/{slug}"
+        if "/funding/seal-of-excellence" in link:
 
-        if slug not in state["items"]:
+            if link not in state["items"]:
 
-            date_obj = datetime.fromisoformat(created.replace("Z", "+00:00"))
-            formatted_date = date_obj.strftime("%d %B %Y")
-
-            send_message(token, chat_id, title, link, formatted_date)
-
-            state["items"][slug] = True
+                send_message(token, chat_id, title, link, pub_date)
+                state["items"][link] = True
 
     save_state(state)
 
