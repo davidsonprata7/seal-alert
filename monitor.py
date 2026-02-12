@@ -35,11 +35,22 @@ def clean_html(raw_html):
     clean = re.sub('<.*?>', '', raw_html)
     return clean.strip()
 
-def load_state():
-    if os.path.exists(STATE_FILE):
+if os.path.exists(STATE_FILE):
+    try:
         with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    return {"seen_ids": [], "last_heartbeat": 0}
+            state = json.load(f)
+    except:
+        state = {"seen_ids": [], "last_status_time": 0}
+else:
+    state = {"seen_ids": [], "last_status_time": 0}
+
+# Garante que as chaves sempre existam
+if "seen_ids" not in state:
+    state["seen_ids"] = []
+
+if "last_status_time" not in state:
+    state["last_status_time"] = 0
+
 
 def save_state(state):
     with open(STATE_FILE, "w") as f:
