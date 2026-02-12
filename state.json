@@ -1,1 +1,12 @@
-{"last_hash": "b824fae1b5460d1c103a49a4698886b10ad3c2c2d648bddc8755fd0f881db17c", "no_change_count": 0, "seen_ids": [], "last_heartbeat": 0}
+{
+  "items": {
+    "ID_UNICO_1": {
+      "title": "Nome da vaga",
+      "end_date": "2026-03-30"
+    },
+    "ID_UNICO_2": {
+      "title": "Outra vaga",
+      "end_date": "2026-04-15"
+    }
+  }
+}
