@@ -2,98 +2,119 @@ import requests
 import os
 import json
 import re
-import html
 from datetime import datetime
+from html import unescape
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
 API_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/eac-api/content?filters[permanent|field_eac_topics][0]=290&language=en&page[limit]=10&sort=date_desc&story_type=pledge&type=story"
 
+BASE_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu"
+
 STATE_FILE = "state.json"
 
 
-# ---------------- TELEGRAM ---------------- #
+# =========================
+# TELEGRAM
+# =========================
+
+def send_photo(photo_url, caption, button_url):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "HTML",
+        "reply_markup": json.dumps({
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Learn more",
+                        "url": button_url
+                    }
+                ]
+            ]
+        })
+    }
+
+    requests.post(url, data=payload)
+
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
+        "text": text
     }
     requests.post(url, data=payload)
 
 
-# ---------------- HELPERS ---------------- #
+# =========================
+# UTIL
+# =========================
 
 def clean_html(raw_html):
     text = re.sub('<.*?>', '', raw_html)
-    text = html.unescape(text)
+    text = unescape(text)
+    text = text.replace("\xa0", " ")
     return text.strip()
 
 
-def extract_end_date(url):
+def get_end_date(article_url):
     try:
-        r = requests.get(url)
-        html_content = r.text
+        r = requests.get(article_url, timeout=10)
+        html = r.text
 
-        match = re.search(r'End date:</strong>\s*([^<]+)', html_content)
+        match = re.search(r'End date.*?(\d{1,2}\s\w+\s\d{4})', html, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            return match.group(1)
         else:
             return "Not specified"
+
     except:
         return "Not specified"
 
 
-def get_flag(title):
-    countries = {
+def get_flag_from_title(title):
+    flags = {
         "Estonia": "🇪🇪",
-        "Brittany": "🇫🇷",
-        "France": "🇫🇷",
-        "Germany": "🇩🇪",
-        "Spain": "🇪🇸",
-        "Italy": "🇮🇹",
-        "Portugal": "🇵🇹",
         "Poland": "🇵🇱",
-        "Netherlands": "🇳🇱",
-        "Belgium": "🇧🇪",
-        "Sweden": "🇸🇪",
-        "Finland": "🇫🇮",
-        "Ireland": "🇮🇪",
-        "Austria": "🇦🇹",
-        "Czech": "🇨🇿",
-        "Hungary": "🇭🇺",
-        "Romania": "🇷🇴",
+        "Italy": "🇮🇹",
+        "France": "🇫🇷",
         "Croatia": "🇭🇷",
-        "Lithuania": "🇱🇹",
-        "Latvia": "🇱🇻",
-        "Slovenia": "🇸🇮",
-        "Slovakia": "🇸🇰",
-        "Bulgaria": "🇧🇬",
-        "Greece": "🇬🇷",
-        "Denmark": "🇩🇰"
+        "Brittany": "🇫🇷"
     }
 
-    for country, flag in countries.items():
+    for country in flags:
         if country.lower() in title.lower():
-            return flag
+            return flags[country]
 
-    return ""
+    return "🌍"
 
 
-# ---------------- STATE ---------------- #
+# =========================
+# STATE
+# =========================
 
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
-                return json.load(f)
+                state = json.load(f)
         except:
-            pass
-    return {"seen_ids": [], "last_heartbeat": 0}
+            state = {}
+    else:
+        state = {}
+
+    if "seen_ids" not in state:
+        state["seen_ids"] = []
+
+    if "last_heartbeat" not in state:
+        state["last_heartbeat"] = 0
+
+    return state
 
 
 def save_state(state):
@@ -101,7 +122,9 @@ def save_state(state):
         json.dump(state, f)
 
 
-# ---------------- MAIN ---------------- #
+# =========================
+# MAIN
+# =========================
 
 def main():
     state = load_state()
@@ -113,40 +136,38 @@ def main():
     new_items = []
 
     for item in data["data"]:
-        nid = item["nid"]
-        if nid not in seen_ids:
+        if item["nid"] not in seen_ids:
             new_items.append(item)
 
     if new_items:
         for item in reversed(new_items):
+
             title = item["title"]
             intro = clean_html(item["intro"])
-            link = "https://marie-sklodowska-curie-actions.ec.europa.eu" + item["url"]
+            article_url = BASE_URL + item["url"]
+            image = item["image"]
 
-            flag = get_flag(title)
-            end_date = extract_end_date(link)
+            flag = get_flag_from_title(title)
+            end_date = get_end_date(article_url)
 
-            message = f"""
-🚩 <b>{title} {flag}</b>
+            caption = f"""🚩<b>{title}</b> {flag}
 
-📍 {intro}
+📍{intro}
 
 ⚠️ <b>End date:</b> ⚠️
-✅ {end_date}
-
-🔗 <a href="{link}">Learn more</a>
+✅ <b>{end_date}</b>
 """
 
-            send_message(message)
+            send_photo(image, caption, article_url)
 
             seen_ids.append(item["nid"])
 
         state["seen_ids"] = seen_ids
         save_state(state)
 
-    # Heartbeat a cada 3 horas
+    # Heartbeat 3h
     now = int(datetime.now().timestamp())
-    if now - state.get("last_heartbeat", 0) > 10800:
+    if now - state["last_heartbeat"] > 10800:
         send_message("✅ Bot ativo — nenhuma nova publicação encontrada.")
         state["last_heartbeat"] = now
         save_state(state)
