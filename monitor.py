@@ -1,10 +1,10 @@
 import os
 import json
-import hashlib
 import requests
 from bs4 import BeautifulSoup
 
-URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excellence"
+BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
+LIST_URL = BASE + "/funding/seal-of-excellence"
 STATE_FILE = "state.json"
 
 HEADERS = {
@@ -14,7 +14,7 @@ HEADERS = {
 
 def load_state():
     if not os.path.exists(STATE_FILE):
-        return {"hash": ""}
+        return {"sent": []}
     with open(STATE_FILE, "r") as f:
         return json.load(f)
 
@@ -24,55 +24,84 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def get_page():
-    r = requests.get(URL, headers=HEADERS, timeout=30)
-    print("STATUS:", r.status_code)
-    return r.text
+def get_listing_links():
+    r = requests.get(LIST_URL, headers=HEADERS, timeout=30)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    links = []
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+
+        if href.startswith("/funding/seal-of-excellence/") and href != "/funding/seal-of-excellence":
+            full = BASE + href
+            if full not in links:
+                links.append(full)
+
+    return links
 
 
-def get_hash(content):
-    return hashlib.sha256(content.encode()).hexdigest()
+def extract_article_data(url):
+    r = requests.get(url, headers=HEADERS, timeout=30)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-
-def extract_content(html):
-    soup = BeautifulSoup(html, "html.parser")
-
-    # Título
+    # Title
     title_tag = soup.find("h1")
-    title = title_tag.get_text(strip=True) if title_tag else "Update detected"
+    title = title_tag.get_text(strip=True) if title_tag else "No title"
 
-    # Primeiro parágrafo
+    # First paragraph
     p_tag = soup.find("p")
     summary = p_tag.get_text(strip=True) if p_tag else ""
 
-    # End date (busca texto contendo "End date")
+    # End date
     end_date = "Not found"
-    text_blocks = soup.find_all(text=True)
+    all_text = soup.get_text(separator="\n")
 
-    for t in text_blocks:
-        if "End date" in t:
-            parent = t.parent.get_text(strip=True)
-            end_date = parent.replace("End date:", "").strip()
+    for line in all_text.split("\n"):
+        if "End date" in line:
+            end_date = line.replace("End date:", "").strip()
             break
 
-    return title, summary, end_date
+    # Image
+    img_tag = soup.find("img")
+    image_url = None
+    if img_tag and img_tag.get("src"):
+        src = img_tag["src"]
+        image_url = src if src.startswith("http") else BASE + src
+
+    return title, summary, end_date, image_url
 
 
-def send_message(token, chat_id, title, summary, end_date):
-    api = f"https://api.telegram.org/bot{token}/sendMessage"
+def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
 
-    message = (
+    caption = (
         f"🚩 {title}\n\n"
         f"📍 {summary}\n\n"
         f"⚠️ End date: ⚠️\n"
         f"✅ {end_date}"
     )
 
-    requests.post(api, data={
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML"
-    })
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "🔗 Learn more", "url": url}]
+        ]
+    }
+
+    if image_url:
+        api = f"https://api.telegram.org/bot{token}/sendPhoto"
+        requests.post(api, data={
+            "chat_id": chat_id,
+            "photo": image_url,
+            "caption": caption,
+            "reply_markup": json.dumps(keyboard)
+        })
+    else:
+        api = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(api, data={
+            "chat_id": chat_id,
+            "text": caption,
+            "reply_markup": json.dumps(keyboard)
+        })
 
 
 def main():
@@ -80,23 +109,21 @@ def main():
     chat_id = os.getenv("CHAT_ID")
 
     state = load_state()
-    html = get_page()
-    current_hash = get_hash(html)
+    links = get_listing_links()
 
-    print("Current hash:", current_hash)
+    print("Links encontrados:", len(links))
 
-    if state["hash"] != current_hash:
-        print("Change detected!")
+    for link in links:
 
-        title, summary, end_date = extract_content(html)
+        if link not in state["sent"]:
 
-        send_message(token, chat_id, title, summary, end_date)
+            title, summary, end_date, image_url = extract_article_data(link)
 
-        state["hash"] = current_hash
-        save_state(state)
+            send_telegram(token, chat_id, title, summary, end_date, link, image_url)
 
-    else:
-        print("No changes.")
+            state["sent"].append(link)
+
+    save_state(state)
 
 
 if __name__ == "__main__":
