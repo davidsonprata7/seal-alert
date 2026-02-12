@@ -1,3 +1,5 @@
+if DEBUG:
+    send_message("🐞 DEBUG ATIVO")
 import requests
 import os
 import json
