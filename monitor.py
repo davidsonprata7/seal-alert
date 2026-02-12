@@ -47,22 +47,19 @@ def extract_article(url):
     r = requests.get(url, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Title
     title_tag = soup.find("h1")
     title = title_tag.get_text(strip=True) if title_tag else "No title"
 
-    # First paragraph (summary)
     first_p = soup.find("p")
     summary = first_p.get_text(strip=True) if first_p else ""
 
-    # End date
     end_date = "Not found"
-    for line in soup.get_text("\n").split("\n"):
+    text = soup.get_text("\n")
+    for line in text.split("\n"):
         if "End date" in line:
             end_date = line.replace("End date:", "").strip()
             break
 
-    # Image
     image_url = None
     img_tag = soup.find("img")
     if img_tag and img_tag.get("src"):
@@ -73,9 +70,6 @@ def extract_article(url):
 
 
 def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
-
-    if not token or not chat_id:
-        raise RuntimeError("BOT_TOKEN or CHAT_ID missing")
 
     caption = (
         f"🚩 {title}\n\n"
@@ -90,24 +84,44 @@ def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
         ]
     }
 
+    # Try sending photo by downloading it first
     if image_url:
-        api = f"https://api.telegram.org/bot{token}/sendPhoto"
-        response = requests.post(api, data={
-            "chat_id": chat_id,
-            "photo": image_url,
-            "caption": caption,
-            "reply_markup": json.dumps(keyboard)
-        })
-    else:
-        api = f"https://api.telegram.org/bot{token}/sendMessage"
-        response = requests.post(api, data={
-            "chat_id": chat_id,
-            "text": caption,
-            "reply_markup": json.dumps(keyboard)
-        })
+        try:
+            img_response = requests.get(image_url, timeout=30)
+            img_response.raise_for_status()
 
-    print("TELEGRAM STATUS:", response.status_code)
-    print("TELEGRAM RESPONSE:", response.text)
+            api = f"https://api.telegram.org/bot{token}/sendPhoto"
+            response = requests.post(
+                api,
+                data={
+                    "chat_id": chat_id,
+                    "caption": caption,
+                    "reply_markup": json.dumps(keyboard)
+                },
+                files={"photo": img_response.content}
+            )
+
+            print("TELEGRAM STATUS:", response.status_code)
+            print("TELEGRAM RESPONSE:", response.text)
+
+            if response.status_code == 200:
+                return
+
+            print("Photo failed. Falling back to text.")
+
+        except Exception as e:
+            print("Image send error:", e)
+
+    # Fallback to text message
+    api = f"https://api.telegram.org/bot{token}/sendMessage"
+    response = requests.post(api, data={
+        "chat_id": chat_id,
+        "text": caption,
+        "reply_markup": json.dumps(keyboard)
+    })
+
+    print("TEXT STATUS:", response.status_code)
+    print("TEXT RESPONSE:", response.text)
 
     if response.status_code != 200:
         raise RuntimeError("Telegram send failed")
@@ -116,6 +130,9 @@ def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
 def main():
     token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
+
+    if not token or not chat_id:
+        raise RuntimeError("BOT_TOKEN or CHAT_ID missing")
 
     state = load_state()
     links = get_links()
