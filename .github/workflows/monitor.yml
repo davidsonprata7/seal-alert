@@ -2,7 +2,8 @@ name: Monitor MSCA
 
 on:
   schedule:
-    - cron: "0 */3 * * *"
+    - cron: "0 */3 * * *"      # Checa novas publicações
+    - cron: "0 13 * * 6"       # Sábado 10:00 Brasilia (UTC 13)
   workflow_dispatch:
 
 jobs:
@@ -26,8 +27,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          DEBUG: ${{ secrets.DEBUG }}
-          
+
       - name: Commit state
         run: |
           git config user.name "github-actions"
@@ -35,4 +35,3 @@ jobs:
           git add state.json
           git commit -m "Update state" || echo "No changes"
           git push
-
