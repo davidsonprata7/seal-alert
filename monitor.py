@@ -138,7 +138,7 @@ def main():
 
             caption = (
                 f"🚩{title}\n\n"
-                f"⚠️ End date:⚠️\n"
+                f"⚠️ End date:\n"
                 f"✅ {end_date_obj.strftime('%d %B %Y')}"
             )
 
@@ -159,7 +159,7 @@ def main():
                     caption = (
                         f"⏰ Reminder\n\n"
                         f"🚩{title}\n\n"
-                        f"⚠️ End date:⚠️\n"
+                        f"⚠️ End date:\n"
                         f"✅ {end_date_obj.strftime('%d %B %Y')}"
                     )
 
