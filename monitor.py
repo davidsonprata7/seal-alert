@@ -5,7 +5,8 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 
-RSS_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excellence/rss.xml"
+BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
+LIST_URL = f"{BASE}/funding/seal-of-excellence"
 STATE_FILE = "state.json"
 
 HEADERS = {
@@ -36,20 +37,9 @@ def today_brt():
     return (datetime.utcnow() - timedelta(hours=3)).date()
 
 
-def country_to_flag(country):
-    try:
-        import pycountry
-        c = pycountry.countries.get(name=country)
-        if not c:
-            return ""
-        return "".join(chr(127397 + ord(x)) for x in c.alpha_2)
-    except:
-        return ""
+def send_telegram(token, chat_id, text, image_url, link):
 
-
-def send_telegram(token, chat_id, image_url, caption, link):
-
-    api = f"https://api.telegram.org/bot{token}/sendPhoto"
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
 
     keyboard = {
         "inline_keyboard": [
@@ -58,10 +48,10 @@ def send_telegram(token, chat_id, image_url, caption, link):
     }
 
     response = requests.post(
-        api,
+        url,
         data={
             "chat_id": chat_id,
-            "caption": caption,
+            "caption": text,
             "reply_markup": json.dumps(keyboard),
             "parse_mode": "HTML"
         },
@@ -73,60 +63,76 @@ def send_telegram(token, chat_id, image_url, caption, link):
         raise RuntimeError(response.text)
 
 
-def extract_end_date_and_image(url):
+def get_article_links():
 
-    r = requests.get(url, headers=HEADERS, timeout=30)
+    r = requests.get(LIST_URL, headers=HEADERS, timeout=30)
     if r.status_code != 200:
-        return None, None
+        raise RuntimeError("Failed to load listing page")
 
     soup = BeautifulSoup(r.text, "html.parser")
 
+    links = []
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+
+        if "/funding/seal-of-excellence/" in href and href.count("/") > 3:
+            full = BASE + href if href.startswith("/") else href
+            if full not in links:
+                links.append(full)
+
+    return links
+
+
+def parse_article(url):
+
+    r = requests.get(url, headers=HEADERS, timeout=30)
+    if r.status_code != 200:
+        return None
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    title_tag = soup.find("h1")
+    if not title_tag:
+        return None
+
+    title = title_tag.get_text(strip=True)
+
     end_date = None
 
-    for field in soup.find_all("div", class_="ecl-description-list__item"):
-        label = field.find("dt")
-        value = field.find("dd")
+    rows = soup.find_all("div", class_="ecl-description-list__item")
 
-        if label and value and "End date" in label.get_text():
+    for row in rows:
+        dt = row.find("dt")
+        dd = row.find("dd")
+
+        if dt and dd and "End date" in dt.get_text():
             try:
                 end_date = datetime.strptime(
-                    value.get_text(strip=True),
+                    dd.get_text(strip=True),
                     "%d %B %Y"
                 ).date()
             except:
                 pass
 
-    img_tag = soup.find("img")
+    if not end_date:
+        return None
+
+    img = soup.find("img")
     image_url = None
-    if img_tag and img_tag.get("src"):
-        src = img_tag["src"]
+
+    if img and img.get("src"):
+        src = img["src"]
         if src.startswith("http"):
             image_url = src
         else:
-            image_url = "https://marie-sklodowska-curie-actions.ec.europa.eu" + src
+            image_url = BASE + src
 
-    return end_date, image_url
-
-
-def fetch_rss_items():
-
-    r = requests.get(RSS_URL, headers=HEADERS, timeout=30)
-    if r.status_code != 200:
-        raise RuntimeError("Failed to load RSS")
-
-    soup = BeautifulSoup(r.text, "xml")
-
-    items = []
-
-    for item in soup.find_all("item"):
-        title = item.title.text
-        link = item.link.text
-        items.append({
-            "title": title,
-            "link": link
-        })
-
-    return items
+    return {
+        "title": title,
+        "end_date": end_date,
+        "image": image_url
+    }
 
 
 def main():
@@ -137,49 +143,45 @@ def main():
     state = load_state()
     today = today_brt()
 
-    items = fetch_rss_items()
+    links = get_article_links()
 
-    for item in items:
+    for link in links:
 
-        link = item["link"]
-        title = item["title"]
-
-        end_date, image_url = extract_end_date_and_image(link)
-
-        if not end_date:
+        article = parse_article(link)
+        if not article:
             continue
 
         if link not in state["items"]:
 
             caption = (
-                f"🚩<b>{title}</b>\n\n"
+                f"🚩 <b>{article['title']}</b>\n\n"
                 f"⚠️ <b>End date:</b>\n"
-                f"✅ {end_date.strftime('%d %B %Y')}"
+                f"✅ {article['end_date'].strftime('%d %B %Y')}"
             )
 
-            if image_url:
-                send_telegram(token, chat_id, image_url, caption, link)
+            if article["image"]:
+                send_telegram(token, chat_id, caption, article["image"], link)
 
             state["items"][link] = {
-                "end_date": str(end_date),
+                "end_date": str(article["end_date"]),
                 "last_reminder": None
             }
 
         else:
             entry = state["items"][link]
 
-            if today.weekday() == 5 and end_date > today:
+            if today.weekday() == 5 and article["end_date"] > today:
                 if entry["last_reminder"] != str(today):
 
                     caption = (
                         f"⏰ <b>Reminder</b>\n\n"
-                        f"🚩<b>{title}</b>\n\n"
+                        f"🚩 <b>{article['title']}</b>\n\n"
                         f"⚠️ <b>End date:</b>\n"
-                        f"✅ {end_date.strftime('%d %B %Y')}"
+                        f"✅ {article['end_date'].strftime('%d %B %Y')}"
                     )
 
-                    if image_url:
-                        send_telegram(token, chat_id, image_url, caption, link)
+                    if article["image"]:
+                        send_telegram(token, chat_id, caption, article["image"], link)
 
                     entry["last_reminder"] = str(today)
 
