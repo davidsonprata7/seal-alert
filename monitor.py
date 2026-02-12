@@ -50,46 +50,45 @@ def extract_article(url):
     r = requests.get(url, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Title
+    # TITLE
     title_tag = soup.find("h1")
     title = title_tag.get_text(strip=True) if title_tag else "No title"
 
-    # Summary
+    # SUMMARY — primeiro parágrafo real do artigo
     summary = ""
-    main_content = soup.find("main")
-    if main_content:
-        first_p = main_content.find("p")
-        if first_p:
-            summary = first_p.get_text(strip=True).replace("\xa0", " ")
-
-    # End date
-    end_date = "Not found"
-
-    # método 1
-    for dt in soup.find_all("dt"):
-        if "End date" in dt.get_text(strip=True):
-            dd = dt.find_next_sibling("dd")
-            if dd:
-                end_date = dd.get_text(strip=True)
+    article = soup.find("main")
+    if article:
+        paragraphs = article.find_all("p")
+        for p in paragraphs:
+            text = p.get_text(strip=True).replace("\xa0", " ")
+            if len(text) > 80:
+                summary = text
                 break
 
-    # método 2 (classes ECL)
-    if end_date == "Not found":
-        terms = soup.find_all(class_="ecl-description-list__term")
-        for term in terms:
-            if "End date" in term.get_text(strip=True):
-                definition = term.find_next(class_="ecl-description-list__definition")
-                if definition:
-                    end_date = definition.get_text(strip=True)
-                    break
+    # END DATE — estrutura real MSCA
+    end_date = "Not found"
 
-    # Image
+    items = soup.find_all("div", class_="ecl-description-list__item")
+    for item in items:
+        term = item.find(class_="ecl-description-list__term")
+        definition = item.find(class_="ecl-description-list__definition")
+
+        if term and definition:
+            if "End date" in term.get_text(strip=True):
+                end_date = definition.get_text(strip=True)
+                break
+
+    # IMAGE — imagem principal do artigo
     image_url = None
-    og = soup.find("meta", property="og:image")
-    if og and og.get("content"):
-        image_url = og["content"]
+    media = soup.find("div", class_="ecl-media-container")
+    if media:
+        img = media.find("img")
+        if img and img.get("src"):
+            src = img["src"]
+            image_url = src if src.startswith("http") else BASE + src
 
     return title, summary, end_date, image_url
+
 
 
 def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
