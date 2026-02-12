@@ -5,8 +5,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 
-BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-LIST_URL = f"{BASE}/funding/seal-of-excellence"
+RSS_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excellence/rss.xml"
 STATE_FILE = "state.json"
 
 HEADERS = {
@@ -74,21 +73,14 @@ def send_telegram(token, chat_id, image_url, caption, link):
         raise RuntimeError(response.text)
 
 
-def extract_article_data(url):
+def extract_end_date_and_image(url):
 
     r = requests.get(url, headers=HEADERS, timeout=30)
     if r.status_code != 200:
-        return None
+        return None, None
 
     soup = BeautifulSoup(r.text, "html.parser")
 
-    title_tag = soup.find("h1")
-    if not title_tag:
-        return None
-
-    title = title_tag.get_text(strip=True)
-
-    # 🔥 BUSCA ESPECÍFICA DO CAMPO END DATE
     end_date = None
 
     for field in soup.find_all("div", class_="ecl-description-list__item"):
@@ -104,10 +96,6 @@ def extract_article_data(url):
             except:
                 pass
 
-    if not end_date:
-        return None
-
-    # imagem principal
     img_tag = soup.find("img")
     image_url = None
     if img_tag and img_tag.get("src"):
@@ -115,38 +103,30 @@ def extract_article_data(url):
         if src.startswith("http"):
             image_url = src
         else:
-            image_url = BASE + src
+            image_url = "https://marie-sklodowska-curie-actions.ec.europa.eu" + src
 
-    country = ""
-    if " in " in title:
-        country = title.split(" in ")[-1]
-
-    return {
-        "title": title,
-        "end_date": end_date,
-        "image": image_url,
-        "country": country
-    }
+    return end_date, image_url
 
 
-def fetch_links():
+def fetch_rss_items():
 
-    r = requests.get(LIST_URL, headers=HEADERS, timeout=30)
+    r = requests.get(RSS_URL, headers=HEADERS, timeout=30)
     if r.status_code != 200:
-        raise RuntimeError("Failed to load listing page")
+        raise RuntimeError("Failed to load RSS")
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    soup = BeautifulSoup(r.text, "xml")
 
-    links = []
+    items = []
 
-    for a in soup.select("a.ecl-link"):
-        href = a.get("href")
-        if href and "/funding/seal-of-excellence/" in href and href != "/funding/seal-of-excellence":
-            full = BASE + href if href.startswith("/") else href
-            if full not in links:
-                links.append(full)
+    for item in soup.find_all("item"):
+        title = item.title.text
+        link = item.link.text
+        items.append({
+            "title": title,
+            "link": link
+        })
 
-    return links
+    return items
 
 
 def main():
@@ -157,49 +137,49 @@ def main():
     state = load_state()
     today = today_brt()
 
-    links = fetch_links()
+    items = fetch_rss_items()
 
-    for link in links:
+    for item in items:
 
-        data = extract_article_data(link)
-        if not data:
+        link = item["link"]
+        title = item["title"]
+
+        end_date, image_url = extract_end_date_and_image(link)
+
+        if not end_date:
             continue
 
         if link not in state["items"]:
 
-            flag = country_to_flag(data["country"])
-
             caption = (
-                f"🚩<b>{data['title']}</b> {flag}\n\n"
+                f"🚩<b>{title}</b>\n\n"
                 f"⚠️ <b>End date:</b>\n"
-                f"✅ {data['end_date'].strftime('%d %B %Y')}"
+                f"✅ {end_date.strftime('%d %B %Y')}"
             )
 
-            if data["image"]:
-                send_telegram(token, chat_id, data["image"], caption, link)
+            if image_url:
+                send_telegram(token, chat_id, image_url, caption, link)
 
             state["items"][link] = {
-                "end_date": str(data["end_date"]),
+                "end_date": str(end_date),
                 "last_reminder": None
             }
 
         else:
             entry = state["items"][link]
 
-            if today.weekday() == 5 and data["end_date"] > today:
+            if today.weekday() == 5 and end_date > today:
                 if entry["last_reminder"] != str(today):
-
-                    flag = country_to_flag(data["country"])
 
                     caption = (
                         f"⏰ <b>Reminder</b>\n\n"
-                        f"🚩<b>{data['title']}</b> {flag}\n\n"
+                        f"🚩<b>{title}</b>\n\n"
                         f"⚠️ <b>End date:</b>\n"
-                        f"✅ {data['end_date'].strftime('%d %B %Y')}"
+                        f"✅ {end_date.strftime('%d %B %Y')}"
                     )
 
-                    if data["image"]:
-                        send_telegram(token, chat_id, data["image"], caption, link)
+                    if image_url:
+                        send_telegram(token, chat_id, image_url, caption, link)
 
                     entry["last_reminder"] = str(today)
 
