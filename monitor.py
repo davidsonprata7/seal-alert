@@ -1,15 +1,11 @@
 import os
 import json
 import requests
-from bs4 import BeautifulSoup
+from datetime import datetime
 
 BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-URL = f"{BASE}/funding/seal-of-excellence"
+API = f"{BASE}/jsonapi/node/seal_of_excellence"
 STATE_FILE = "state.json"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
 
 
 def load_state():
@@ -24,8 +20,23 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def send_message(token, chat_id, text, link):
-    api = f"https://api.telegram.org/bot{token}/sendMessage"
+def fetch_items():
+    r = requests.get(API, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError("Failed to fetch JSON API")
+
+    data = r.json()
+    return data.get("data", [])
+
+
+def send_message(token, chat_id, title, link, end_date):
+    api = f"https://api.telegram.org/bot{token}/sendPhoto"
+
+    caption = (
+        f"🚩 {title} 🇫🇷\n\n"
+        f"⚠️ End date:\n"
+        f"✅ {end_date}"
+    )
 
     keyboard = {
         "inline_keyboard": [
@@ -37,53 +48,38 @@ def send_message(token, chat_id, text, link):
         api,
         data={
             "chat_id": chat_id,
-            "text": text,
+            "photo": f"{BASE}/sites/default/files/styles/oe_theme_medium/public/default_images/news-default.jpg",
+            "caption": caption,
             "reply_markup": json.dumps(keyboard)
         },
         timeout=30
     )
 
 
-def get_links():
-
-    r = requests.get(URL, headers=HEADERS, timeout=30)
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    links = []
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-
-        if "/funding/seal-of-excellence/" in href and href.count("/") > 3:
-            full = BASE + href if href.startswith("/") else href
-            if full not in links:
-                links.append(full)
-
-    return links
-
-
 def main():
-
     token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
 
     state = load_state()
+    items = fetch_items()
 
-    links = get_links()
+    print("Items encontrados:", len(items))
 
-    print("Links encontrados:", len(links))
+    for item in items:
+        title = item["attributes"]["title"]
+        created = item["attributes"]["created"]
 
-    for link in links:
+        slug = item["attributes"]["drupal_internal__nid"]
+        link = f"{BASE}/node/{slug}"
 
-        if link not in state["items"]:
+        if slug not in state["items"]:
 
-            title = link.split("/")[-1].replace("-", " ").title()
+            date_obj = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            formatted_date = date_obj.strftime("%d %B %Y")
 
-            message = f"🚩 New publication detected:\n\n{title}"
+            send_message(token, chat_id, title, link, formatted_date)
 
-            send_message(token, chat_id, message, link)
-
-            state["items"][link] = True
+            state["items"][slug] = True
 
     save_state(state)
 
