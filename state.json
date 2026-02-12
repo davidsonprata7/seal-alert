@@ -1,12 +1,10 @@
 {
   "items": {
-    "ID_UNICO_1": {
-      "title": "Nome da vaga",
-      "end_date": "2026-03-30"
-    },
-    "ID_UNICO_2": {
-      "title": "Outra vaga",
-      "end_date": "2026-04-15"
+    "https://link-publicacao": {
+      "title": "MSCA Seal of Excellence scheme kicks off in Croatia",
+      "end_date": "2026-12-31",
+      "last_reminder": "2026-02-07"
     }
-  }
+  },
+  "last_heartbeat": "2026-02-12"
 }
