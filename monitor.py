@@ -11,13 +11,10 @@ CHAT_ID = os.environ["CHAT_ID"]
 API_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/eac-api/content?filters[permanent|field_eac_topics][0]=290&language=en&page[limit]=10&sort=date_desc&story_type=pledge&type=story"
 
 BASE_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-
 STATE_FILE = "state.json"
 
 
-# =========================
-# TELEGRAM
-# =========================
+# ================= TELEGRAM =================
 
 def send_photo(photo_url, caption, button_url):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -29,12 +26,7 @@ def send_photo(photo_url, caption, button_url):
         "parse_mode": "HTML",
         "reply_markup": json.dumps({
             "inline_keyboard": [
-                [
-                    {
-                        "text": "Learn more",
-                        "url": button_url
-                    }
-                ]
+                [{"text": "Learn more", "url": button_url}]
             ]
         })
     }
@@ -44,16 +36,11 @@ def send_photo(photo_url, caption, button_url):
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text
-    }
+    payload = {"chat_id": CHAT_ID, "text": text}
     requests.post(url, data=payload)
 
 
-# =========================
-# UTIL
-# =========================
+# ================= UTIL =================
 
 def clean_html(raw_html):
     text = re.sub('<.*?>', '', raw_html)
@@ -62,16 +49,26 @@ def clean_html(raw_html):
     return text.strip()
 
 
+def shrink_image(image_url):
+    return image_url.replace("eac_ratio_16_9_w_480", "eac_ratio_16_9_w_320")
+
+
 def get_end_date(article_url):
     try:
         r = requests.get(article_url, timeout=10)
         html = r.text
 
+        # 1️⃣ Busca padrão clássico
         match = re.search(r'End date.*?(\d{1,2}\s\w+\s\d{4})', html, re.IGNORECASE)
         if match:
             return match.group(1)
-        else:
-            return "Not specified"
+
+        # 2️⃣ Busca campo estruturado
+        match = re.search(r'(\d{1,2}\s(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4})', html)
+        if match:
+            return match.group(1)
+
+        return "Not specified"
 
     except:
         return "Not specified"
@@ -94,9 +91,7 @@ def get_flag_from_title(title):
     return "🌍"
 
 
-# =========================
-# STATE
-# =========================
+# ================= STATE =================
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -122,9 +117,7 @@ def save_state(state):
         json.dump(state, f)
 
 
-# =========================
-# MAIN
-# =========================
+# ================= MAIN =================
 
 def main():
     state = load_state()
@@ -145,7 +138,7 @@ def main():
             title = item["title"]
             intro = clean_html(item["intro"])
             article_url = BASE_URL + item["url"]
-            image = item["image"]
+            image = shrink_image(item["image"])
 
             flag = get_flag_from_title(title)
             end_date = get_end_date(article_url)
