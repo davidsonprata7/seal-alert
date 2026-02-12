@@ -108,4 +108,79 @@ def parse_page():
         if "End date:" in description:
             try:
                 end_str = description.split("End date:")[-1].strip()
-                end
+                end_date = datetime.strptime(end_str, "%d %B %Y").date()
+            except:
+                pass
+
+        if end_date:
+            results.append({
+                "title": title,
+                "link": link,
+                "description": description,
+                "image": image,
+                "country": country,
+                "end_date": end_date
+            })
+
+    return results
+
+
+def main():
+
+    token = get_env("BOT_TOKEN")
+    chat_id = get_env("CHAT_ID")
+
+    state = load_state()
+    today = today_brt()
+
+    items = parse_page()
+
+    for item in items:
+
+        link = item["link"]
+
+        if link not in state["items"]:
+
+            flag = country_to_flag(item["country"])
+
+            caption = (
+                f"🚩{item['title']} {flag}\n\n"
+                f"📍{item['description']}\n\n"
+                f"⚠️ End date:⚠️\n"
+                f"✅ {item['end_date'].strftime('%d %B %Y')}"
+            )
+
+            if item["image"]:
+                send_telegram(token, chat_id, item["image"], caption, link)
+
+            state["items"][link] = {
+                "end_date": str(item["end_date"]),
+                "last_reminder": None
+            }
+
+        else:
+            entry = state["items"][link]
+
+            if today.weekday() == 5:
+                if entry["last_reminder"] != str(today):
+
+                    flag = country_to_flag(item["country"])
+
+                    caption = (
+                        f"⏰ Reminder\n\n"
+                        f"🚩{item['title']} {flag}\n\n"
+                        f"📍{item['description']}\n\n"
+                        f"⚠️ End date:⚠️\n"
+                        f"✅ {item['end_date'].strftime('%d %B %Y')}"
+                    )
+
+                    if item["image"]:
+                        send_telegram(token, chat_id, item["image"], caption, link)
+
+                    entry["last_reminder"] = str(today)
+
+    save_state(state)
+
+
+if __name__ == "__main__":
+    main()
