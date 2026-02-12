@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime
 from html import unescape
+import pycountry
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
@@ -15,6 +16,12 @@ STATE_FILE = "state.json"
 
 
 # ================= TELEGRAM =================
+
+def send_message(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text}
+    requests.post(url, data=payload)
+
 
 def send_photo(photo_url, caption, button_url):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -34,12 +41,6 @@ def send_photo(photo_url, caption, button_url):
     requests.post(url, data=payload)
 
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text}
-    requests.post(url, data=payload)
-
-
 # ================= UTIL =================
 
 def clean_html(raw_html):
@@ -53,42 +54,44 @@ def shrink_image(image_url):
     return image_url.replace("eac_ratio_16_9_w_480", "eac_ratio_16_9_w_320")
 
 
+# ================= 1️⃣ DETECÇÃO AUTOMÁTICA DE QUALQUER PAÍS =================
+
+def get_flag_from_title(title):
+    for country in pycountry.countries:
+        if country.name.lower() in title.lower():
+            code = country.alpha_2
+            return ''.join(chr(127397 + ord(c)) for c in code)
+    return "🌍"
+
+
+# ================= DEADLINE =================
+
 def get_end_date(article_url):
     try:
         r = requests.get(article_url, timeout=10)
         html = r.text
 
-        # 1️⃣ Busca padrão clássico
-        match = re.search(r'End date.*?(\d{1,2}\s\w+\s\d{4})', html, re.IGNORECASE)
+        match = re.search(
+            r'(\d{1,2}\s(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4})',
+            html
+        )
+
         if match:
             return match.group(1)
 
-        # 2️⃣ Busca campo estruturado
-        match = re.search(r'(\d{1,2}\s(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4})', html)
-        if match:
-            return match.group(1)
-
-        return "Not specified"
+        return None
 
     except:
-        return "Not specified"
+        return None
 
 
-def get_flag_from_title(title):
-    flags = {
-        "Estonia": "🇪🇪",
-        "Poland": "🇵🇱",
-        "Italy": "🇮🇹",
-        "France": "🇫🇷",
-        "Croatia": "🇭🇷",
-        "Brittany": "🇫🇷"
-    }
-
-    for country in flags:
-        if country.lower() in title.lower():
-            return flags[country]
-
-    return "🌍"
+def days_until(date_string):
+    try:
+        end_date = datetime.strptime(date_string, "%d %B %Y")
+        delta = end_date - datetime.now()
+        return delta.days
+    except:
+        return None
 
 
 # ================= STATE =================
@@ -106,9 +109,6 @@ def load_state():
     if "seen_ids" not in state:
         state["seen_ids"] = []
 
-    if "last_heartbeat" not in state:
-        state["last_heartbeat"] = 0
-
     return state
 
 
@@ -120,25 +120,52 @@ def save_state(state):
 # ================= MAIN =================
 
 def main():
+
     state = load_state()
     seen_ids = state["seen_ids"]
 
-    response = requests.get(API_URL)
-    data = response.json()
+    # ================= 2️⃣ ALERTA DE FALHA DA API =================
+
+    try:
+        response = requests.get(API_URL, timeout=10)
+
+        if response.status_code != 200:
+            send_message("🚨 ALERTA: API retornou status diferente de 200.")
+            return
+
+        data = response.json()
+
+    except Exception:
+        send_message("🚨 ALERTA: Falha ao acessar a API.")
+        return
+
+    # ================= 3️⃣ ALERTA DE ESTRUTURA ALTERADA =================
+
+    if "data" not in data:
+        send_message("🚨 ALERTA: Estrutura da API mudou (campo 'data' não encontrado).")
+        return
 
     new_items = []
 
     for item in data["data"]:
+
+        if not all(k in item for k in ["nid", "title", "url"]):
+            send_message("🚨 ALERTA: Estrutura inesperada em item da API.")
+            return
+
         if item["nid"] not in seen_ids:
             new_items.append(item)
 
+    # ================= NOVOS ARTIGOS =================
+
     if new_items:
+
         for item in reversed(new_items):
 
             title = item["title"]
-            intro = clean_html(item["intro"])
+            intro = clean_html(item.get("intro", ""))
             article_url = BASE_URL + item["url"]
-            image = shrink_image(item["image"])
+            image = shrink_image(item.get("image", ""))
 
             flag = get_flag_from_title(title)
             end_date = get_end_date(article_url)
@@ -146,9 +173,29 @@ def main():
             caption = f"""🚩<b>{title}</b> {flag}
 
 📍{intro}
+"""
 
-⚠️ <b>End date:</b> ⚠️
+            if end_date:
+
+                caption += f"""
+⚠️ <b>End date:</b>
 ✅ <b>{end_date}</b>
+"""
+
+                # ================= 4️⃣ ALERTA DE DEADLINE PRÓXIMO =================
+
+                days_left = days_until(end_date)
+
+                if days_left is not None:
+                    if days_left <= 3:
+                        caption += "\n🚨 <b>URGENTE: 3 dias ou menos restantes!</b>\n"
+                    elif days_left <= 7:
+                        caption += "\n⏳ <b>Deadline próximo (7 dias ou menos)</b>\n"
+
+            else:
+                caption += """
+⚠️ <b>End date:</b>
+❌ <b>Not specified</b>
 """
 
             send_photo(image, caption, article_url)
@@ -156,13 +203,6 @@ def main():
             seen_ids.append(item["nid"])
 
         state["seen_ids"] = seen_ids
-        save_state(state)
-
-    # Heartbeat 3h
-    now = int(datetime.now().timestamp())
-    if now - state["last_heartbeat"] > 10800:
-        send_message("✅ Bot ativo — nenhuma nova publicação encontrada.")
-        state["last_heartbeat"] = now
         save_state(state)
 
 
