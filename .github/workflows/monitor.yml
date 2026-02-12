@@ -29,9 +29,10 @@ jobs:
         run: python monitor.py
 
       - name: Commit state file
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add last_ids.txt || true
-          git commit -m "Update state file" || echo "No changes"
-          git push
+  run: |
+    git config --global user.name "github-actions"
+    git config --global user.email "github-actions@github.com"
+    git add state.json || true
+    git commit -m "Update state file" || echo "No changes"
+    git push
+
