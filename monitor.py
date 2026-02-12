@@ -1,13 +1,14 @@
 import os
 import json
 import requests
-import xml.etree.ElementTree as ET
 
-RSS_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/news/rss.xml"
+BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
+AJAX_URL = BASE + "/views/ajax"
 STATE_FILE = "state.json"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    "User-Agent": "Mozilla/5.0",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
 }
 
 
@@ -23,24 +24,29 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def fetch_rss():
-    r = requests.get(RSS_URL, headers=HEADERS, timeout=30)
+def fetch_items():
+    payload = {
+        "view_name": "news",
+        "view_display_id": "page_1",
+        "view_args": "",
+        "view_path": "/funding/seal-of-excellence",
+        "view_base_path": "news",
+    }
 
-    print("STATUS CODE:", r.status_code)
+    r = requests.post(AJAX_URL, headers=HEADERS, data=payload, timeout=30)
+
+    print("STATUS:", r.status_code)
 
     if r.status_code != 200:
-        print("RESPONSE TEXT:", r.text[:500])
-        raise RuntimeError("Failed to load RSS")
+        print(r.text[:500])
+        raise RuntimeError("Failed to fetch AJAX")
 
-    return r.content
+    return r.json()
 
 
 def main():
-    rss = fetch_rss()
-    root = ET.fromstring(rss)
-
-    items = root.findall(".//item")
-    print("RSS items encontrados:", len(items))
+    data = fetch_items()
+    print("AJAX response length:", len(data))
 
 
 if __name__ == "__main__":
