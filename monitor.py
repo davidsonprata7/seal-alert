@@ -3,16 +3,14 @@ import json
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-import re
 
 
 BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
 LIST_URL = f"{BASE}/funding/seal-of-excellence"
 STATE_FILE = "state.json"
 
-
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+    "User-Agent": "Mozilla/5.0"
 }
 
 
@@ -52,7 +50,7 @@ def country_to_flag(country):
 
 def send_telegram(token, chat_id, image_url, caption, link):
 
-    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    api = f"https://api.telegram.org/bot{token}/sendPhoto"
 
     keyboard = {
         "inline_keyboard": [
@@ -61,7 +59,7 @@ def send_telegram(token, chat_id, image_url, caption, link):
     }
 
     response = requests.post(
-        url,
+        api,
         data={
             "chat_id": chat_id,
             "caption": caption,
@@ -90,17 +88,26 @@ def extract_article_data(url):
 
     title = title_tag.get_text(strip=True)
 
-    body_text = soup.get_text(" ", strip=True)
+    # 🔥 BUSCA ESPECÍFICA DO CAMPO END DATE
+    end_date = None
 
-    match = re.search(r"End date:\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})", body_text)
-    if not match:
+    for field in soup.find_all("div", class_="ecl-description-list__item"):
+        label = field.find("dt")
+        value = field.find("dd")
+
+        if label and value and "End date" in label.get_text():
+            try:
+                end_date = datetime.strptime(
+                    value.get_text(strip=True),
+                    "%d %B %Y"
+                ).date()
+            except:
+                pass
+
+    if not end_date:
         return None
 
-    try:
-        end_date = datetime.strptime(match.group(1), "%d %B %Y").date()
-    except:
-        return None
-
+    # imagem principal
     img_tag = soup.find("img")
     image_url = None
     if img_tag and img_tag.get("src"):
@@ -132,9 +139,9 @@ def fetch_links():
 
     links = []
 
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/funding/seal-of-excellence/" in href and href != "/funding/seal-of-excellence":
+    for a in soup.select("a.ecl-link"):
+        href = a.get("href")
+        if href and "/funding/seal-of-excellence/" in href and href != "/funding/seal-of-excellence":
             full = BASE + href if href.startswith("/") else href
             if full not in links:
                 links.append(full)
