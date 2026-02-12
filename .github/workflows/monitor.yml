@@ -2,7 +2,7 @@ name: Monitor MSCA
 
 on:
   schedule:
-    - cron: "0 */3 * * *"      # Checa novas publicações
+    - cron: "0 */3 * * *"      # Verifica novas publicações
     - cron: "0 13 * * 6"       # Sábado 10:00 Brasilia (UTC 13)
   workflow_dispatch:
 
