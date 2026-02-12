@@ -27,7 +27,6 @@ def get_links():
         page = browser.new_page()
         page.goto(LIST_URL, timeout=60000)
         page.wait_for_timeout(5000)
-
         html = page.content()
         browser.close()
 
@@ -45,22 +44,27 @@ def get_links():
 
 
 def extract_article(url):
-    r = requests.get(url)
+    r = requests.get(url, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    title = soup.find("h1").get_text(strip=True)
+    # Title
+    title_tag = soup.find("h1")
+    title = title_tag.get_text(strip=True) if title_tag else "No title"
 
+    # First paragraph (summary)
     first_p = soup.find("p")
     summary = first_p.get_text(strip=True) if first_p else ""
 
+    # End date
     end_date = "Not found"
     for line in soup.get_text("\n").split("\n"):
         if "End date" in line:
             end_date = line.replace("End date:", "").strip()
             break
 
-    img_tag = soup.find("img")
+    # Image
     image_url = None
+    img_tag = soup.find("img")
     if img_tag and img_tag.get("src"):
         src = img_tag["src"]
         image_url = src if src.startswith("http") else BASE + src
@@ -68,7 +72,11 @@ def extract_article(url):
     return title, summary, end_date, image_url
 
 
-def send(token, chat_id, title, summary, end_date, url, image_url):
+def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
+
+    if not token or not chat_id:
+        raise RuntimeError("BOT_TOKEN or CHAT_ID missing")
+
     caption = (
         f"🚩 {title}\n\n"
         f"📍 {summary}\n\n"
@@ -84,7 +92,7 @@ def send(token, chat_id, title, summary, end_date, url, image_url):
 
     if image_url:
         api = f"https://api.telegram.org/bot{token}/sendPhoto"
-        requests.post(api, data={
+        response = requests.post(api, data={
             "chat_id": chat_id,
             "photo": image_url,
             "caption": caption,
@@ -92,11 +100,17 @@ def send(token, chat_id, title, summary, end_date, url, image_url):
         })
     else:
         api = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(api, data={
+        response = requests.post(api, data={
             "chat_id": chat_id,
             "text": caption,
             "reply_markup": json.dumps(keyboard)
         })
+
+    print("TELEGRAM STATUS:", response.status_code)
+    print("TELEGRAM RESPONSE:", response.text)
+
+    if response.status_code != 200:
+        raise RuntimeError("Telegram send failed")
 
 
 def main():
@@ -110,8 +124,12 @@ def main():
 
     for link in links:
         if link not in state["sent"]:
+            print("Enviando:", link)
+
             title, summary, end_date, image_url = extract_article(link)
-            send(token, chat_id, title, summary, end_date, link, image_url)
+
+            send_telegram(token, chat_id, title, summary, end_date, link, image_url)
+
             state["sent"].append(link)
 
     save_state(state)
