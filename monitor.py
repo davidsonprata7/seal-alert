@@ -10,9 +10,9 @@ URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/funding/seal-of-excel
 STATE_FILE = "state.json"
 
 
-# ========================
+# ==============================
 # UTIL
-# ========================
+# ==============================
 
 def get_env(name):
     value = os.getenv(name)
@@ -41,23 +41,29 @@ def save_state(state):
 
 
 def today_brt():
-    # Brasília UTC-3 fixo
+    # Brasília UTC-3
     return (datetime.utcnow() - timedelta(hours=3)).date()
 
 
-# ========================
-# SCRAPING
-# ========================
+# ==============================
+# SCRAPING LISTA PRINCIPAL
+# ==============================
 
 def parse_list_page():
-    r = requests.get(URL)
+    r = requests.get(URL, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
     items = []
 
-    for link in soup.select("a[href*='/funding/seal-of-excellence/']"):
-        href = link.get("href")
+    # Estrutura real do site MSCA
+    for card in soup.select("div.ecl-card"):
+        link = card.select_one("a")
+
+        if not link:
+            continue
+
         title = link.get_text(strip=True)
+        href = link.get("href")
 
         if not href or not title:
             continue
@@ -70,33 +76,36 @@ def parse_list_page():
             "url": full_url
         })
 
-    # remove duplicados
+    # Remove duplicados
     unique = {item["id"]: item for item in items}
     return list(unique.values())
 
 
+# ==============================
+# EXTRAÇÃO END DATE
+# ==============================
+
 def extract_end_date(detail_url):
-    r = requests.get(detail_url)
+    r = requests.get(detail_url, timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    text = soup.get_text(" ", strip=True)
+    for strong in soup.find_all("strong"):
+        if "End date" in strong.get_text():
+            full_text = strong.parent.get_text(" ", strip=True)
+            date_part = full_text.replace("End date:", "").strip()
 
-    marker = "End date:"
-    if marker not in text:
-        return None
+            try:
+                parsed = datetime.strptime(date_part, "%d %B %Y")
+                return parsed.strftime("%Y-%m-%d")
+            except Exception:
+                return None
 
-    try:
-        raw = text.split(marker)[1].strip().split(" ")[0:3]
-        date_str = " ".join(raw)
-        parsed = datetime.strptime(date_str, "%d %B %Y")
-        return parsed.strftime("%Y-%m-%d")
-    except Exception:
-        return None
+    return None
 
 
-# ========================
-# MAIN LOGIC
-# ========================
+# ==============================
+# MAIN
+# ==============================
 
 def main():
     token = get_env("BOT_TOKEN")
@@ -148,7 +157,7 @@ def main():
             if end_date_date > today:
                 open_count += 1
 
-                # LEMBRETE SEMANAL
+                # Reminder semanal sábado
                 if is_saturday:
                     last = entry.get("last_reminder")
 
@@ -168,7 +177,7 @@ def main():
 
                         entry["last_reminder"] = str(today)
 
-    # HEARTBEAT diário
+    # Heartbeat diário
     if state["last_heartbeat"] != str(today):
         send_telegram(
             token,
