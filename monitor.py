@@ -1,15 +1,12 @@
 import os
 import json
 import requests
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
 BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
 LIST_URL = BASE + "/funding/seal-of-excellence"
 STATE_FILE = "state.json"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
 
 
 def load_state():
@@ -24,15 +21,21 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-def get_listing_links():
-    r = requests.get(LIST_URL, headers=HEADERS, timeout=30)
-    soup = BeautifulSoup(r.text, "html.parser")
+def get_links():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(LIST_URL, timeout=60000)
+        page.wait_for_timeout(5000)
+
+        html = page.content()
+        browser.close()
+
+    soup = BeautifulSoup(html, "html.parser")
 
     links = []
-
     for a in soup.find_all("a", href=True):
         href = a["href"]
-
         if href.startswith("/funding/seal-of-excellence/") and href != "/funding/seal-of-excellence":
             full = BASE + href
             if full not in links:
@@ -41,28 +44,21 @@ def get_listing_links():
     return links
 
 
-def extract_article_data(url):
-    r = requests.get(url, headers=HEADERS, timeout=30)
+def extract_article(url):
+    r = requests.get(url)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Title
-    title_tag = soup.find("h1")
-    title = title_tag.get_text(strip=True) if title_tag else "No title"
+    title = soup.find("h1").get_text(strip=True)
 
-    # First paragraph
-    p_tag = soup.find("p")
-    summary = p_tag.get_text(strip=True) if p_tag else ""
+    first_p = soup.find("p")
+    summary = first_p.get_text(strip=True) if first_p else ""
 
-    # End date
     end_date = "Not found"
-    all_text = soup.get_text(separator="\n")
-
-    for line in all_text.split("\n"):
+    for line in soup.get_text("\n").split("\n"):
         if "End date" in line:
             end_date = line.replace("End date:", "").strip()
             break
 
-    # Image
     img_tag = soup.find("img")
     image_url = None
     if img_tag and img_tag.get("src"):
@@ -72,8 +68,7 @@ def extract_article_data(url):
     return title, summary, end_date, image_url
 
 
-def send_telegram(token, chat_id, title, summary, end_date, url, image_url):
-
+def send(token, chat_id, title, summary, end_date, url, image_url):
     caption = (
         f"🚩 {title}\n\n"
         f"📍 {summary}\n\n"
@@ -109,18 +104,14 @@ def main():
     chat_id = os.getenv("CHAT_ID")
 
     state = load_state()
-    links = get_listing_links()
+    links = get_links()
 
     print("Links encontrados:", len(links))
 
     for link in links:
-
         if link not in state["sent"]:
-
-            title, summary, end_date, image_url = extract_article_data(link)
-
-            send_telegram(token, chat_id, title, summary, end_date, link, image_url)
-
+            title, summary, end_date, image_url = extract_article(link)
+            send(token, chat_id, title, summary, end_date, link, image_url)
             state["sent"].append(link)
 
     save_state(state)
