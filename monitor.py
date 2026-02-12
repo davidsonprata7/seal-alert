@@ -31,34 +31,8 @@ def today_brt():
     return (datetime.utcnow() - timedelta(hours=3)).date()
 
 
-def get_flag(country_name):
+def country_to_flag(country_name):
     try:
         import pycountry
         country = pycountry.countries.get(name=country_name)
-        if not country:
-            return ""
-        code = country.alpha_2
-        return "".join(chr(127397 + ord(c)) for c in code)
-    except:
-        return ""
-
-
-def send_telegram(token, chat_id, title, description, end_date, url, image_url, flag):
-
-    caption = (
-        f"🚩{title} {flag}\n\n"
-        f"📍{description}\n\n"
-        f"⚠️ End date:\n"
-        f"✅ {end_date}"
-    )
-
-    telegram_url = f"https://api.telegram.org/bot{token}/sendPhoto"
-
-    requests.post(
-        telegram_url,
-        data={
-            "chat_id": chat_id,
-            "caption": caption,
-            "parse_mode": "HTML",
-            "reply_markup": json.dumps({
-                "inline_keyboard":_
+        if not
