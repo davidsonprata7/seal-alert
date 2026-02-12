@@ -1,12 +1,19 @@
 import os
 import json
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+import re
 
 
 BASE = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-API = f"{BASE}/jsonapi/node/article"
+LIST_URL = f"{BASE}/funding/seal-of-excellence"
 STATE_FILE = "state.json"
+
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+}
 
 
 def get_env(name):
@@ -58,9 +65,10 @@ def send_telegram(token, chat_id, image_url, caption, link):
         data={
             "chat_id": chat_id,
             "caption": caption,
-            "reply_markup": json.dumps(keyboard)
+            "reply_markup": json.dumps(keyboard),
+            "parse_mode": "HTML"
         },
-        files={"photo": requests.get(image_url).content},
+        files={"photo": requests.get(image_url, headers=HEADERS).content},
         timeout=30
     )
 
@@ -68,22 +76,70 @@ def send_telegram(token, chat_id, image_url, caption, link):
         raise RuntimeError(response.text)
 
 
-def fetch_articles():
+def extract_article_data(url):
 
-    params = {
-        "filter[field_tags.name]": "Seal of Excellence",
-        "sort": "-created",
-        "page[limit]": 20
+    r = requests.get(url, headers=HEADERS, timeout=30)
+    if r.status_code != 200:
+        return None
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    title_tag = soup.find("h1")
+    if not title_tag:
+        return None
+
+    title = title_tag.get_text(strip=True)
+
+    body_text = soup.get_text(" ", strip=True)
+
+    match = re.search(r"End date:\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})", body_text)
+    if not match:
+        return None
+
+    try:
+        end_date = datetime.strptime(match.group(1), "%d %B %Y").date()
+    except:
+        return None
+
+    img_tag = soup.find("img")
+    image_url = None
+    if img_tag and img_tag.get("src"):
+        src = img_tag["src"]
+        if src.startswith("http"):
+            image_url = src
+        else:
+            image_url = BASE + src
+
+    country = ""
+    if " in " in title:
+        country = title.split(" in ")[-1]
+
+    return {
+        "title": title,
+        "end_date": end_date,
+        "image": image_url,
+        "country": country
     }
 
-    headers = {"User-Agent": "Mozilla/5.0"}
 
-    r = requests.get(API, params=params, headers=headers, timeout=30)
+def fetch_links():
 
+    r = requests.get(LIST_URL, headers=HEADERS, timeout=30)
     if r.status_code != 200:
-        raise RuntimeError("Failed to fetch articles")
+        raise RuntimeError("Failed to load listing page")
 
-    return r.json().get("data", [])
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    links = []
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/funding/seal-of-excellence/" in href and href != "/funding/seal-of-excellence":
+            full = BASE + href if href.startswith("/") else href
+            if full not in links:
+                links.append(full)
+
+    return links
 
 
 def main():
@@ -94,77 +150,49 @@ def main():
     state = load_state()
     today = today_brt()
 
-    articles = fetch_articles()
+    links = fetch_links()
 
-    for article in articles:
+    for link in links:
 
-        attr = article["attributes"]
-
-        title = attr.get("title")
-        path = attr.get("path", {}).get("alias")
-
-        if not path:
+        data = extract_article_data(link)
+        if not data:
             continue
-
-        link = BASE + path
-
-        body = attr.get("body", {}).get("value", "")
-
-        if "End date" not in body:
-            continue
-
-        # extrair End date do HTML
-        try:
-            import re
-            match = re.search(r"End date:\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})", body)
-            if not match:
-                continue
-            end_date_obj = datetime.strptime(match.group(1), "%d %B %Y").date()
-        except:
-            continue
-
-        image_url = None
-        if "relationships" in article and "field_image" in article["relationships"]:
-            img_rel = article["relationships"]["field_image"]["data"]
-            if img_rel:
-                file_id = img_rel["id"]
-                file_url = f"{BASE}/jsonapi/file/file/{file_id}"
-                img_response = requests.get(file_url, timeout=30)
-                if img_response.status_code == 200:
-                    img_data = img_response.json()["data"]["attributes"]
-                    image_url = BASE + img_data["uri"]["url"]
 
         if link not in state["items"]:
 
+            flag = country_to_flag(data["country"])
+
             caption = (
-                f"🚩{title}\n\n"
-                f"⚠️ End date:\n"
-                f"✅ {end_date_obj.strftime('%d %B %Y')}"
+                f"🚩<b>{data['title']}</b> {flag}\n\n"
+                f"⚠️ <b>End date:</b>\n"
+                f"✅ {data['end_date'].strftime('%d %B %Y')}"
             )
 
-            if image_url:
-                send_telegram(token, chat_id, image_url, caption, link)
+            if data["image"]:
+                send_telegram(token, chat_id, data["image"], caption, link)
 
             state["items"][link] = {
-                "end_date": str(end_date_obj),
+                "end_date": str(data["end_date"]),
                 "last_reminder": None
             }
 
         else:
             entry = state["items"][link]
 
-            if today.weekday() == 5 and end_date_obj > today:
+            if today.weekday() == 5 and data["end_date"] > today:
                 if entry["last_reminder"] != str(today):
 
+                    flag = country_to_flag(data["country"])
+
                     caption = (
-                        f"⏰ Reminder\n\n"
-                        f"🚩{title}\n\n"
-                        f"⚠️ End date:\n"
-                        f"✅ {end_date_obj.strftime('%d %B %Y')}"
+                        f"⏰ <b>Reminder</b>\n\n"
+                        f"🚩<b>{data['title']}</b> {flag}\n\n"
+                        f"⚠️ <b>End date:</b>\n"
+                        f"✅ {data['end_date'].strftime('%d %B %Y')}"
                     )
 
-                    if image_url:
-                        send_telegram(token, chat_id, image_url, caption, link)
+                    if data["image"]:
+                        send_telegram(token, chat_id, data["image"], caption, link)
 
                     entry["last_reminder"] = str(today)
 
