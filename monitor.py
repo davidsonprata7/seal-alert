@@ -1,5 +1,3 @@
-if DEBUG:
-    send_message("🐞 DEBUG ATIVO")
 import requests
 import os
 import json
@@ -107,6 +105,8 @@ def save_state(state):
 # ================= MAIN =================
 
 def main():
+    if DEBUG:
+    send_message("🐞 DEBUG ATIVO")
 
     now = datetime.utcnow()
     state = load_state()
