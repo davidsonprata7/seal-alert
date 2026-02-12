@@ -1,39 +1,92 @@
 import requests
 import os
-from bs4 import BeautifulSoup
+import json
+import re
+from datetime import datetime
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+CHAT_ID = os.environ["CHAT_ID"]
 
-BASE_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu"
-URL = BASE_URL + "/funding/seal-of-excellence"
+API_URL = "https://marie-sklodowska-curie-actions.ec.europa.eu/eac-api/content?filters[permanent|field_eac_topics][0]=290&language=en&page[limit]=10&sort=date_desc&story_type=pledge&type=story"
+
+STATE_FILE = "state.json"
 
 def send_message(text):
-    telegram_url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": text[:4000]
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False
     }
-    requests.post(telegram_url, data=payload, timeout=30)
+    requests.post(url, data=payload)
 
-r = requests.get(URL, timeout=30)
-soup = BeautifulSoup(r.text, "html.parser")
+def send_photo(photo_url, caption):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "HTML"
+    }
+    requests.post(url, data=payload)
 
-all_links = []
+def clean_html(raw_html):
+    clean = re.sub('<.*?>', '', raw_html)
+    return clean.strip()
 
-for a in soup.find_all("a", href=True):
-    href = a["href"]
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    return {"seen_ids": [], "last_heartbeat": 0}
 
-    # ignorar navegação e outras ações
-    if "/funding/seal-of-excellence/" in href:
-        if not href.endswith("/seal-of-excellence") and "postdoctoral" not in href:
-            full_link = href if href.startswith("http") else BASE_URL + href
-            all_links.append(full_link)
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
 
-unique_links = list(set(all_links))
+def main():
+    state = load_state()
+    seen_ids = state["seen_ids"]
 
-msg = "🔎 POSSÍVEIS LINKS DA LISTA:\n\n"
-for link in unique_links[:10]:
-    msg += link + "\n\n"
+    response = requests.get(API_URL)
+    data = response.json()
 
-send_message(msg)
+    new_items = []
+
+    for item in data["data"]:
+        nid = item["nid"]
+        if nid not in seen_ids:
+            new_items.append(item)
+
+    if new_items:
+        for item in reversed(new_items):
+            title = item["title"]
+            intro = clean_html(item["intro"])
+            link = "https://marie-sklodowska-curie-actions.ec.europa.eu" + item["url"]
+            image = item["image"]
+
+            caption = f"""🚀 <b>New Seal of Excellence published</b>
+
+<b>{title}</b>
+
+{intro}
+
+🔗 <a href="{link}">Learn more</a>
+"""
+
+            send_photo(image, caption)
+            seen_ids.append(item["nid"])
+
+        state["seen_ids"] = seen_ids
+        save_state(state)
+
+    # Heartbeat a cada 3 horas
+    now = int(datetime.now().timestamp())
+    if now - state.get("last_heartbeat", 0) > 10800:
+        send_message("✅ Bot ativo — nenhuma nova publicação encontrada.")
+        state["last_heartbeat"] = now
+        save_state(state)
+
+if __name__ == "__main__":
+    main()
