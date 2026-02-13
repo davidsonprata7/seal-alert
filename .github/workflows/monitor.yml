@@ -2,7 +2,7 @@ name: Seal Excellence Monitor
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # roda a cada 1 hora (UTC)
+    - cron: '0 */10 * * *'   # roda a cada 1 hora (UTC)
   workflow_dispatch:
 
 jobs:
